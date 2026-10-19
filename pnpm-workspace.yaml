@@ -1,0 +1,10 @@
+packages:
+  - 'examples/*'
+
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
+# Keep every package on TypeScript ~6.0: typescript-eslint 8 doesn't support TS 7 yet (CLAUDE.md §6), and
+# dts-bundle-generator declares `typescript` as its own dependency, which a lockfile refresh could otherwise lift.
+overrides:
+  typescript: ~6.0.3

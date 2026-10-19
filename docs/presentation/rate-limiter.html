@@ -1,0 +1,2142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rate Limiter Design</title>
+    <meta
+      name="description"
+      content="Design and solution of the TypeScript rate limiter coding challenge: at most 10 requests in any 1-second span per consumer."
+    />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --page: #d9dde3;
+        --ink: #111827;
+        --muted: #4b5563;
+        --line: #cbd2db;
+        --soft: #f3f4f6;
+        --accent: #1d4ed8;
+        --accent-soft: #eaf1ff;
+        --ok: #166534;
+        --ok-soft: #e8f6ec;
+        --warn: #92400e;
+        --warn-soft: #fdf3e2;
+        --bad: #b91c1c;
+        --bad-soft: #fdecec;
+        --code-bg: #f3f4f6;
+        --sans:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+
+      body {
+        background: var(--page);
+        color: var(--ink);
+        font-family: var(--sans);
+        overflow: hidden;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      .deck {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 1280px;
+        height: 720px;
+        transform: translate(-50%, -50%) scale(var(--scale, 1));
+        transform-origin: center center;
+      }
+
+      .slide {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 48px 64px 56px;
+        background: var(--bg);
+        box-shadow: 0 6px 30px rgb(0 0 0 / 0.18);
+        overflow: hidden;
+        font-size: 22px;
+        line-height: 1.4;
+      }
+
+      .slide[hidden] {
+        display: none;
+      }
+
+      .slide::after {
+        content: 'Rate limiter · design and solution  —  ' attr(data-n);
+        position: absolute;
+        left: 64px;
+        bottom: 18px;
+        font-size: 14px;
+        color: var(--muted);
+        white-space: pre;
+      }
+
+      .slide::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 10px;
+        background: var(--accent);
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        line-height: 1.15;
+      }
+
+      h2 {
+        font-size: 38px;
+        letter-spacing: -0.01em;
+      }
+
+      h3 {
+        font-size: 22px;
+        color: var(--accent);
+      }
+
+      p {
+        margin: 0;
+      }
+
+      ul {
+        margin: 0;
+        padding-left: 1.1em;
+      }
+
+      li + li {
+        margin-top: 6px;
+      }
+
+      .kicker {
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      .lead {
+        font-size: 22px;
+        color: var(--muted);
+      }
+
+      .small {
+        font-size: 17px;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      code,
+      pre {
+        font-family: var(--mono);
+      }
+
+      code {
+        font-size: 0.88em;
+        background: var(--code-bg);
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+
+      pre {
+        margin: 0;
+        padding: 14px 18px;
+        background: var(--code-bg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        font-size: 15.5px;
+        line-height: 1.45;
+        white-space: pre;
+        overflow: hidden;
+      }
+
+      pre code {
+        background: none;
+        padding: 0;
+        font-size: inherit;
+      }
+
+      .c {
+        color: #4b5563;
+        font-style: italic;
+      }
+
+      .k {
+        color: #7c2d92;
+      }
+
+      .s {
+        color: #166534;
+      }
+
+      .cols {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 32px;
+        align-items: start;
+      }
+
+      .cols.wide-left {
+        grid-template-columns: 1.35fr 1fr;
+      }
+
+      .cols.wide-right {
+        grid-template-columns: 1fr 1.35fr;
+      }
+
+      .cols.three {
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 22px;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 16px 20px;
+        background: var(--bg);
+      }
+
+      .card.ok {
+        background: var(--ok-soft);
+        border-color: #9fd3ae;
+      }
+
+      .card.warn {
+        background: var(--warn-soft);
+        border-color: #e8c48d;
+      }
+
+      .card.accent {
+        background: var(--accent-soft);
+        border-color: #a9c2f5;
+      }
+
+      .card h3 {
+        margin-bottom: 8px;
+      }
+
+      .card ul {
+        font-size: 18px;
+      }
+
+      .dense .card {
+        padding: 10px 14px;
+      }
+
+      .dense .card h3 {
+        font-size: 19px;
+        margin-bottom: 4px;
+      }
+
+      .dense .card ul {
+        font-size: 15px;
+      }
+
+      .dense li + li {
+        margin-top: 3px;
+      }
+
+      .tag {
+        display: inline-block;
+        font-size: 14px;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 999px;
+        vertical-align: middle;
+      }
+
+      .tag.ok {
+        background: var(--ok);
+        color: #fff;
+      }
+
+      .tag.warn {
+        background: var(--warn);
+        color: #fff;
+      }
+
+      .tag.accent {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 17px;
+      }
+
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 7px 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      th {
+        background: var(--soft);
+        font-weight: 700;
+      }
+
+      td.yes {
+        color: var(--ok);
+        font-weight: 700;
+      }
+
+      td.no {
+        color: var(--bad);
+        font-weight: 700;
+      }
+
+      table.compact {
+        font-size: 15.5px;
+      }
+
+      table.compact th,
+      table.compact td {
+        padding: 5px 8px;
+      }
+
+      .future {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 20px;
+        margin-top: 8px;
+      }
+
+      .future h4 {
+        margin: 0 0 4px;
+        font-size: 17px;
+      }
+
+      .future ul {
+        font-size: 16px;
+      }
+
+      h3 + ul {
+        margin-top: 8px;
+      }
+
+      tr.pick td {
+        background: var(--ok-soft);
+      }
+
+      .diagram {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+
+      .diagram text {
+        font-family: var(--sans);
+      }
+
+      .diagram .mono {
+        font-family: var(--mono);
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+      }
+
+      .stat {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px 18px;
+        background: var(--accent-soft);
+      }
+
+      .stat strong {
+        display: block;
+        font-size: 44px;
+        line-height: 1.05;
+        color: var(--accent);
+      }
+
+      .stat span {
+        font-size: 16px;
+        color: var(--ink);
+      }
+
+      /* Title slide */
+      .title-slide {
+        justify-content: center;
+        gap: 24px;
+        padding-left: 96px;
+      }
+
+      .title-slide h1 {
+        font-size: 72px;
+        letter-spacing: -0.02em;
+      }
+
+      .title-slide .lead {
+        font-size: 28px;
+        max-width: 900px;
+      }
+
+      .title-slide .meta {
+        font-size: 20px;
+        color: var(--muted);
+      }
+
+      .big-quote {
+        font-size: 30px;
+        font-weight: 600;
+        border-left: 6px solid var(--accent);
+        padding-left: 20px;
+      }
+
+      /* Navigation chrome (screen only) */
+      .nav {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px;
+        background: rgb(255 255 255 / 0.94);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        box-shadow: 0 2px 10px rgb(0 0 0 / 0.12);
+        z-index: 10;
+      }
+
+      .nav button {
+        min-width: 48px;
+        min-height: 48px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--bg);
+        color: var(--ink);
+        font-size: 22px;
+        cursor: pointer;
+      }
+
+      .nav button:hover:not(:disabled) {
+        background: var(--accent-soft);
+      }
+
+      .nav button:disabled {
+        color: #6b7280;
+        cursor: default;
+      }
+
+      .counter {
+        min-width: 72px;
+        text-align: center;
+        font-size: 16px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      :focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 3px;
+      }
+
+      .skip {
+        position: absolute;
+        left: -9999px;
+      }
+
+      .skip:focus {
+        left: 16px;
+        top: 16px;
+        z-index: 20;
+        background: var(--bg);
+        padding: 10px 14px;
+        border-radius: 8px;
+      }
+
+      @page {
+        size: 1280px 720px;
+        margin: 0;
+      }
+
+      @media print {
+        html,
+        body {
+          height: auto;
+          overflow: visible;
+          background: var(--bg);
+        }
+
+        .deck {
+          position: static;
+          transform: none;
+          width: 1280px;
+          height: auto;
+        }
+
+        .slide,
+        .slide[hidden] {
+          position: relative;
+          display: flex;
+          width: 1280px;
+          height: 720px;
+          box-shadow: none;
+          break-after: page;
+          page-break-after: always;
+        }
+
+        .slide:last-child {
+          break-after: auto;
+          page-break-after: auto;
+        }
+
+        .nav,
+        .skip {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#nav">Skip to slide navigation</a>
+    <main
+      id="deck"
+      class="deck"
+      aria-roledescription="slide deck"
+      aria-label="Rate limiter: design and solution"
+    >
+      <!-- 1. Title -->
+      <section class="slide title-slide" aria-label="Slide 1: Title">
+        <p class="kicker">TypeScript coding challenge</p>
+        <h1>Rate limiter:<br />design and solution</h1>
+        <p class="lead">
+          <code>rateLimit(consumer)</code>: at most
+          <strong>10 requests in any 1-second span</strong>
+          per consumer, and the exact milliseconds to wait when denied.
+        </p>
+        <p class="meta">Loic Wong · October 2026 · 14 tasks · 226 tests</p>
+      </section>
+
+      <!-- 2. Problem -->
+      <section class="slide" aria-label="Slide 2: Problem and requirements">
+        <p class="kicker">The problem</p>
+        <h2>Requirements</h2>
+        <div class="cols">
+          <div>
+            <h3>Core</h3>
+            <ul>
+              <li>
+                <code>rateLimit(consumer)</code> decides whether an identified consumer may proceed
+              </li>
+              <li>At most <strong>10 requests in any 1-second span</strong>, per consumer</li>
+              <li>When denied: <strong>how many ms to wait</strong> before retrying</li>
+              <li>A test suite that demonstrates it works</li>
+            </ul>
+          </div>
+          <div style="display: grid; gap: 14px">
+            <div class="card ok">
+              <h3>(a) Limits per resource and per consumer <span class="tag ok">Built</span></h3>
+              <p class="small">
+                <code>ConfigurablePolicyResolver</code>: most specific rule wins, validated up front
+              </p>
+            </div>
+            <div class="card warn">
+              <h3>(b) Highly available web app <span class="tag warn">Designed</span></h3>
+              <p class="small">
+                Redis design documented in the README; the store and strategy ports are ready for it
+              </p>
+            </div>
+            <div class="card accent">
+              <h3>Also built</h3>
+              <p class="small">
+                IETF <code>RateLimit-*</code> headers + <code>Retry-After</code>; client-side
+                <code>acquire</code> and <code>withRateLimit</code>
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. Public API -->
+      <section class="slide" aria-label="Slide 3: Public API at a glance">
+        <p class="kicker">Usage</p>
+        <h2>Public API at a glance</h2>
+        <div class="cols wide-left">
+          <div style="display: grid; gap: 14px">
+            <pre><code><span class="k">import</span> { rateLimit } <span class="k">from</span> <span class="s">'./src'</span>;
+
+<span class="k">const</span> result = <span class="k">await</span> rateLimit({ consumerId: <span class="s">'user-42'</span> });
+
+<span class="k">if</span> (result.allowed) {
+  <span class="c">// Proceed. result.remaining = quota left.</span>
+} <span class="k">else</span> {
+  console.log(<span class="s">`Try again in ${String(result.retryAfterMs)} ms`</span>);
+}</code></pre>
+            <pre><code><span class="k">type</span> RateLimitResult = { limit; resetMs } &amp; (
+  | { allowed: <span class="k">true</span>;  remaining; retryAfterMs: 0 }
+  | { allowed: <span class="k">false</span>; remaining: 0; retryAfterMs }
+);  <span class="c">// discriminated on `allowed`, all readonly</span></code></pre>
+          </div>
+          <table class="compact">
+            <caption class="small muted" style="text-align: left; padding-bottom: 6px">
+              Main exports of
+              <code>src/index.ts</code>
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Function</th>
+                <th scope="col">Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>rateLimit(consumer)</code></td>
+                <td>Default limiter, lazily built from env (10 / 1000 ms)</td>
+              </tr>
+              <tr>
+                <td><code>createRateLimiter(opts)</code></td>
+                <td>
+                  Own limiter: <code>defaultPolicy</code> <em>or</em> <code>policies</code> (+
+                  <code>clock</code>, <code>store</code>)
+                </td>
+              </tr>
+              <tr>
+                <td><code>limiter.check(consumer)</code></td>
+                <td>Check against that limiter</td>
+              </tr>
+              <tr>
+                <td><code>toRateLimitHeaders(r)</code></td>
+                <td>HTTP response headers for a result</td>
+              </tr>
+              <tr>
+                <td><code>acquire(...)</code></td>
+                <td>Wait for a slot instead of being denied</td>
+              </tr>
+              <tr>
+                <td><code>withRateLimit(...)</code></td>
+                <td>Wrap a function so each call waits for a slot</td>
+              </tr>
+              <tr>
+                <td><code>getConfig()</code></td>
+                <td>Validated env config (lazy singleton)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 4. Architecture -->
+      <section class="slide" aria-label="Slide 4: Architecture">
+        <p class="kicker">Architecture</p>
+        <h2>Ports and adapters, one pattern per seam</h2>
+        <svg
+          class="diagram"
+          viewBox="0 0 1180 470"
+          role="img"
+          aria-labelledby="arch-title arch-desc"
+        >
+          <title id="arch-title">Class diagram of the rate limiter</title>
+          <desc id="arch-desc">
+            rateLimit uses the getConfig singleton and the createRateLimiter factory, which builds a
+            RateLimiter. acquire and withRateLimit call RateLimiter.check. RateLimiter depends on
+            the PolicyResolver and RateLimitStrategy interfaces. ConfigurablePolicyResolver
+            implements PolicyResolver. SlidingWindowLogStrategy implements RateLimitStrategy and
+            uses the RateLimitStore and Clock interfaces. InMemoryStore implements RateLimitStore
+            and SystemClock implements Clock.
+          </desc>
+          <defs>
+            <marker
+              id="arr"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="8"
+              markerHeight="8"
+              orient="auto-start-reverse"
+            >
+              <path d="M0 0 L10 5 L0 10 z" fill="#374151" />
+            </marker>
+            <marker
+              id="tri"
+              viewBox="0 0 12 12"
+              refX="11"
+              refY="6"
+              markerWidth="13"
+              markerHeight="13"
+              orient="auto-start-reverse"
+            >
+              <path d="M0 0 L12 6 L0 12 z" fill="#fff" stroke="#374151" stroke-width="1.4" />
+            </marker>
+          </defs>
+          <!-- column labels -->
+          <text x="135" y="14" text-anchor="middle" font-size="14" font-weight="700" fill="#4b5563">
+            COMPOSITION ROOT / CLIENT
+          </text>
+          <text x="440" y="14" text-anchor="middle" font-size="14" font-weight="700" fill="#4b5563">
+            DOMAIN
+          </text>
+          <text x="755" y="14" text-anchor="middle" font-size="14" font-weight="700" fill="#4b5563">
+            PORTS (interfaces)
+          </text>
+          <text
+            x="1065"
+            y="14"
+            text-anchor="middle"
+            font-size="14"
+            font-weight="700"
+            fill="#4b5563"
+          >
+            ADAPTERS
+          </text>
+
+          <!-- edges -->
+          <g stroke="#374151" stroke-width="1.8" fill="none">
+            <path d="M135 130 L135 98" marker-end="url(#arr)" />
+            <path d="M135 200 L135 238" marker-end="url(#arr)" />
+            <path d="M250 165 C290 165, 290 225, 328 225" marker-end="url(#arr)" />
+            <path
+              d="M250 275 C290 275, 290 255, 328 255"
+              marker-end="url(#arr)"
+              stroke-dasharray="6 4"
+            />
+            <path d="M250 405 C300 405, 300 275, 328 275" marker-end="url(#arr)" />
+            <path d="M550 222 C590 222, 590 60, 628 60" marker-end="url(#arr)" />
+            <path d="M550 250 C590 250, 590 185, 628 185" marker-end="url(#arr)" />
+            <path d="M985 222 C960 250, 900 262, 862 284" marker-end="url(#arr)" />
+            <path
+              d="M950 210 C900 300, 900 380, 880 412"
+              marker-end="url(#arr)"
+              stroke-dasharray="2 4"
+            />
+          </g>
+          <g stroke="#374151" stroke-width="1.6" fill="none" stroke-dasharray="7 5">
+            <path d="M950 60 L882 60" marker-end="url(#tri)" />
+            <path d="M950 182 L882 182" marker-end="url(#tri)" />
+            <path d="M950 318 L882 318" marker-end="url(#tri)" />
+            <path d="M950 438 L882 438" marker-end="url(#tri)" />
+          </g>
+          <g font-size="13" fill="#4b5563">
+            <text x="142" y="120">reads</text>
+            <text x="142" y="226">builds lazily</text>
+            <text x="262" y="186">check</text>
+            <text x="270" y="296">creates</text>
+            <text x="262" y="372">check</text>
+            <text x="566" y="120">resolve</text>
+            <text x="558" y="272">consume</text>
+            <text x="950" y="252">update</text>
+            <text x="890" y="378">now</text>
+          </g>
+
+          <!-- column A -->
+          <g>
+            <rect
+              x="20"
+              y="28"
+              width="230"
+              height="70"
+              rx="8"
+              fill="#eaf1ff"
+              stroke="#1d4ed8"
+              stroke-width="1.6"
+            />
+            <text
+              x="135"
+              y="52"
+              text-anchor="middle"
+              font-size="13"
+              fill="#1d4ed8"
+              font-weight="700"
+            >
+              «Singleton, lazy»
+            </text>
+            <text x="135" y="78" text-anchor="middle" font-size="18" class="mono">getConfig()</text>
+
+            <rect
+              x="20"
+              y="130"
+              width="230"
+              height="70"
+              rx="8"
+              fill="#fff"
+              stroke="#374151"
+              stroke-width="1.6"
+            />
+            <text x="135" y="154" text-anchor="middle" font-size="13" fill="#4b5563">
+              default instance
+            </text>
+            <text x="135" y="180" text-anchor="middle" font-size="18" class="mono">
+              rateLimit()
+            </text>
+
+            <rect
+              x="20"
+              y="240"
+              width="230"
+              height="70"
+              rx="8"
+              fill="#eaf1ff"
+              stroke="#1d4ed8"
+              stroke-width="1.6"
+            />
+            <text
+              x="135"
+              y="264"
+              text-anchor="middle"
+              font-size="13"
+              fill="#1d4ed8"
+              font-weight="700"
+            >
+              «Factory»
+            </text>
+            <text x="135" y="290" text-anchor="middle" font-size="18" class="mono">
+              createRateLimiter()
+            </text>
+
+            <rect
+              x="20"
+              y="370"
+              width="230"
+              height="70"
+              rx="8"
+              fill="#eaf1ff"
+              stroke="#1d4ed8"
+              stroke-width="1.6"
+            />
+            <text
+              x="135"
+              y="394"
+              text-anchor="middle"
+              font-size="13"
+              fill="#1d4ed8"
+              font-weight="700"
+            >
+              «Decorator-style wrapper»
+            </text>
+            <text x="135" y="420" text-anchor="middle" font-size="15" class="mono">
+              acquire / withRateLimit
+            </text>
+          </g>
+
+          <!-- column B -->
+          <rect
+            x="330"
+            y="195"
+            width="220"
+            height="95"
+            rx="8"
+            fill="#fff"
+            stroke="#111827"
+            stroke-width="2.2"
+          />
+          <text x="440" y="228" text-anchor="middle" font-size="20" font-weight="700">
+            RateLimiter
+          </text>
+          <line x1="330" y1="242" x2="550" y2="242" stroke="#111827" stroke-width="1" />
+          <text x="440" y="270" text-anchor="middle" font-size="15" class="mono">
+            check(consumer)
+          </text>
+
+          <!-- column C: ports -->
+          <g>
+            <rect
+              x="630"
+              y="28"
+              width="250"
+              height="64"
+              rx="8"
+              fill="#f3f4f6"
+              stroke="#374151"
+              stroke-width="1.4"
+              stroke-dasharray="5 3"
+            />
+            <text x="755" y="52" text-anchor="middle" font-size="13" fill="#4b5563">
+              «interface»
+            </text>
+            <text x="755" y="76" text-anchor="middle" font-size="18" font-weight="700">
+              PolicyResolver
+            </text>
+
+            <rect
+              x="630"
+              y="150"
+              width="250"
+              height="64"
+              rx="8"
+              fill="#f3f4f6"
+              stroke="#374151"
+              stroke-width="1.4"
+              stroke-dasharray="5 3"
+            />
+            <text x="755" y="174" text-anchor="middle" font-size="13" fill="#4b5563">
+              «interface»
+            </text>
+            <text x="755" y="198" text-anchor="middle" font-size="18" font-weight="700">
+              RateLimitStrategy
+            </text>
+
+            <rect
+              x="630"
+              y="286"
+              width="250"
+              height="64"
+              rx="8"
+              fill="#f3f4f6"
+              stroke="#374151"
+              stroke-width="1.4"
+              stroke-dasharray="5 3"
+            />
+            <text x="755" y="310" text-anchor="middle" font-size="13" fill="#4b5563">
+              «interface»
+            </text>
+            <text x="755" y="334" text-anchor="middle" font-size="18" font-weight="700">
+              RateLimitStore&lt;TState&gt;
+            </text>
+
+            <rect
+              x="630"
+              y="406"
+              width="250"
+              height="64"
+              rx="8"
+              fill="#f3f4f6"
+              stroke="#374151"
+              stroke-width="1.4"
+              stroke-dasharray="5 3"
+            />
+            <text x="755" y="430" text-anchor="middle" font-size="13" fill="#4b5563">
+              «interface»
+            </text>
+            <text x="755" y="454" text-anchor="middle" font-size="18" font-weight="700">Clock</text>
+          </g>
+
+          <!-- column D: adapters -->
+          <g>
+            <rect
+              x="950"
+              y="28"
+              width="230"
+              height="64"
+              rx="8"
+              fill="#fff"
+              stroke="#374151"
+              stroke-width="1.6"
+            />
+            <text x="1065" y="66" text-anchor="middle" font-size="16" font-weight="700">
+              ConfigurablePolicyResolver
+            </text>
+
+            <rect
+              x="950"
+              y="150"
+              width="230"
+              height="64"
+              rx="8"
+              fill="#e8f6ec"
+              stroke="#166534"
+              stroke-width="1.6"
+            />
+            <text
+              x="1065"
+              y="174"
+              text-anchor="middle"
+              font-size="13"
+              fill="#166534"
+              font-weight="700"
+            >
+              «Strategy»
+            </text>
+            <text x="1065" y="198" text-anchor="middle" font-size="16" font-weight="700">
+              SlidingWindowLogStrategy
+            </text>
+
+            <rect
+              x="950"
+              y="286"
+              width="230"
+              height="64"
+              rx="8"
+              fill="#e8f6ec"
+              stroke="#166534"
+              stroke-width="1.6"
+            />
+            <text
+              x="1065"
+              y="310"
+              text-anchor="middle"
+              font-size="13"
+              fill="#166534"
+              font-weight="700"
+            >
+              «Adapter» over Map
+            </text>
+            <text x="1065" y="334" text-anchor="middle" font-size="16" font-weight="700">
+              InMemoryStore
+            </text>
+
+            <rect
+              x="950"
+              y="406"
+              width="230"
+              height="64"
+              rx="8"
+              fill="#fff"
+              stroke="#374151"
+              stroke-width="1.6"
+            />
+            <text x="1065" y="430" text-anchor="middle" font-size="13" fill="#4b5563">
+              Date.now()
+            </text>
+            <text x="1065" y="454" text-anchor="middle" font-size="16" font-weight="700">
+              SystemClock
+            </text>
+          </g>
+        </svg>
+        <p class="small muted">
+          Solid arrow: uses · dashed triangle: implements · a new variant is a new class;
+          <code>RateLimiter</code> never changes (OCP, DIP)
+        </p>
+      </section>
+
+      <!-- 5. Request flow -->
+      <section class="slide" aria-label="Slide 5: Request flow">
+        <p class="kicker">Architecture</p>
+        <h2>Request flow of one check</h2>
+        <svg class="diagram" viewBox="0 0 1180 500" role="img" aria-labelledby="seq-title seq-desc">
+          <title id="seq-title">Sequence diagram of a rateLimit call</title>
+          <desc id="seq-desc">
+            The caller calls rateLimit. On the first call it builds the limiter from getConfig.
+            rateLimit calls RateLimiter.check. RateLimiter asks the PolicyResolver for the
+            LimitPolicy, builds the key with JSON.stringify of resource and consumerId, and calls
+            SlidingWindowLogStrategy.consume. The strategy reads the clock and calls
+            RateLimitStore.update with a transition, which runs atomically and returns the
+            RateLimitResult back up to the caller.
+          </desc>
+          <defs>
+            <marker
+              id="sarr"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="8"
+              markerHeight="8"
+              orient="auto"
+            >
+              <path d="M0 0 L10 5 L0 10 z" fill="#111827" />
+            </marker>
+          </defs>
+          <g font-size="16" font-weight="700" text-anchor="middle">
+            <rect x="20" y="4" width="140" height="40" rx="6" fill="#f3f4f6" stroke="#374151" />
+            <text x="90" y="30">Caller</text>
+            <rect x="210" y="4" width="160" height="40" rx="6" fill="#eaf1ff" stroke="#1d4ed8" />
+            <text x="290" y="30" class="mono">rateLimit()</text>
+            <rect
+              x="410"
+              y="4"
+              width="160"
+              height="40"
+              rx="6"
+              fill="#fff"
+              stroke="#111827"
+              stroke-width="2"
+            />
+            <text x="490" y="30">RateLimiter</text>
+            <rect
+              x="600"
+              y="4"
+              width="180"
+              height="40"
+              rx="6"
+              fill="#f3f4f6"
+              stroke="#374151"
+              stroke-dasharray="5 3"
+            />
+            <text x="690" y="30">PolicyResolver</text>
+            <rect x="800" y="4" width="180" height="40" rx="6" fill="#e8f6ec" stroke="#166534" />
+            <text x="890" y="23" font-size="13">SlidingWindow</text>
+            <text x="890" y="39" font-size="13">LogStrategy</text>
+            <rect
+              x="1000"
+              y="4"
+              width="170"
+              height="40"
+              rx="6"
+              fill="#f3f4f6"
+              stroke="#374151"
+              stroke-dasharray="5 3"
+            />
+            <text x="1085" y="30">RateLimitStore</text>
+          </g>
+          <g stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="4 4">
+            <line x1="90" y1="44" x2="90" y2="495" />
+            <line x1="290" y1="44" x2="290" y2="495" />
+            <line x1="490" y1="44" x2="490" y2="495" />
+            <line x1="690" y1="44" x2="690" y2="495" />
+            <line x1="890" y1="44" x2="890" y2="495" />
+            <line x1="1085" y1="44" x2="1085" y2="495" />
+          </g>
+          <!-- activation bars -->
+          <g fill="#ffffff" stroke="#374151" stroke-width="1.2">
+            <rect x="284" y="78" width="12" height="400" />
+            <rect x="484" y="160" width="12" height="300" />
+            <rect x="884" y="300" width="12" height="150" />
+            <rect x="1079" y="370" width="12" height="60" />
+          </g>
+          <g stroke="#111827" stroke-width="1.8" fill="none">
+            <line x1="90" y1="80" x2="282" y2="80" marker-end="url(#sarr)" />
+            <path d="M296 104 h60 v22 h-58" marker-end="url(#sarr)" />
+            <line x1="296" y1="162" x2="482" y2="162" marker-end="url(#sarr)" />
+            <line x1="496" y1="200" x2="688" y2="200" marker-end="url(#sarr)" />
+            <path d="M496 242 h60 v20 h-58" marker-end="url(#sarr)" />
+            <line x1="496" y1="302" x2="882" y2="302" marker-end="url(#sarr)" />
+            <path d="M896 316 h60 v18 h-58" marker-end="url(#sarr)" />
+            <line x1="896" y1="372" x2="1077" y2="372" marker-end="url(#sarr)" />
+          </g>
+          <g stroke="#111827" stroke-width="1.6" fill="none" stroke-dasharray="6 4">
+            <line x1="688" y1="232" x2="498" y2="232" marker-end="url(#sarr)" />
+            <line x1="1079" y1="428" x2="898" y2="428" marker-end="url(#sarr)" />
+            <line x1="884" y1="448" x2="498" y2="448" marker-end="url(#sarr)" />
+            <line x1="484" y1="462" x2="298" y2="462" marker-end="url(#sarr)" />
+            <line x1="284" y1="476" x2="92" y2="476" marker-end="url(#sarr)" />
+          </g>
+          <g font-size="15">
+            <text x="100" y="72" class="mono">rateLimit({ consumerId })</text>
+            <text x="364" y="112" font-size="14" fill="#4b5563">first call only:</text>
+            <text x="364" y="130" font-size="14" class="mono">
+              limiter ??= createRateLimiter(getConfig())
+            </text>
+            <text x="306" y="154" class="mono">check(consumer)</text>
+            <text x="506" y="192" class="mono">resolve(consumer)</text>
+            <text x="560" y="226" class="mono">LimitPolicy</text>
+            <text x="564" y="257" font-size="14" class="mono">
+              key = JSON.stringify([resource, consumerId])
+            </text>
+            <text x="506" y="294" class="mono">consume(key, policy)</text>
+            <text x="964" y="331" font-size="14" class="mono">now = clock.now()</text>
+            <text x="902" y="364" font-size="13" class="mono">
+              update(key, windowMs, transition)
+            </text>
+            <text x="906" y="398" font-size="13" fill="#4b5563">transition runs atomically</text>
+            <text x="906" y="420" font-size="14" class="mono">result</text>
+            <text x="520" y="442" font-size="14" class="mono">RateLimitResult</text>
+            <text x="100" y="470" font-size="14" class="mono">RateLimitResult</text>
+          </g>
+        </svg>
+      </section>
+
+      <!-- 6. Algorithm choice -->
+      <section class="slide" aria-label="Slide 6: Algorithm choice">
+        <p class="kicker">Algorithm</p>
+        <h2>Why a sliding window log</h2>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Algorithm</th>
+              <th scope="col">Holds “≤ 10 in <em>any</em> second”?</th>
+              <th scope="col">Memory / consumer</th>
+              <th scope="col">Wait time</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Fixed window (counter per whole second)</td>
+              <td class="no">No: 20 in 20 ms at a boundary</td>
+              <td>O(1)</td>
+              <td>Coarse (to boundary)</td>
+            </tr>
+            <tr>
+              <td>Token bucket (10 tokens, 10/s refill)</td>
+              <td class="no">No: up to ~19 in a rolling second</td>
+              <td>O(1)</td>
+              <td>Exact next token</td>
+            </tr>
+            <tr class="pick">
+              <td><strong>Sliding window log</strong> (chosen)</td>
+              <td class="yes">Yes, exactly, by construction</td>
+              <td>O(limit): ≤ 10 numbers</td>
+              <td><strong>Exact</strong>: <code>oldest + 1000 − now</code></td>
+            </tr>
+          </tbody>
+        </table>
+        <svg class="diagram" viewBox="0 0 1150 250" role="img" aria-labelledby="tl-title tl-desc">
+          <title id="tl-title">Timeline: why a fixed window breaks the limit</title>
+          <desc id="tl-desc">
+            Ten requests arrive at 0.99 seconds and ten more at 1.01 seconds. A fixed window counts
+            10 in the first second and 10 in the second, so it allows all 20. But the span from 0.5
+            to 1.5 seconds then contains 20 allowed requests. The sliding window log denies the
+            second batch with retryAfterMs 980.
+          </desc>
+          <!-- fixed windows -->
+          <rect x="60" y="150" width="500" height="34" fill="#eaf1ff" stroke="#1d4ed8" />
+          <rect x="560" y="150" width="500" height="34" fill="#f3f4f6" stroke="#374151" />
+          <text x="310" y="173" text-anchor="middle" font-size="16">
+            Fixed window 1: 10 requests, OK
+          </text>
+          <text x="810" y="173" text-anchor="middle" font-size="16">
+            Fixed window 2: 10 requests, OK
+          </text>
+          <!-- axis -->
+          <line x1="60" y1="200" x2="1080" y2="200" stroke="#111827" stroke-width="2" />
+          <g font-size="15" text-anchor="middle" fill="#111827">
+            <line x1="60" y1="194" x2="60" y2="206" stroke="#111827" stroke-width="2" />
+            <text x="60" y="226">0 s</text>
+            <line x1="310" y1="194" x2="310" y2="206" stroke="#111827" stroke-width="2" />
+            <text x="310" y="226">0.5 s</text>
+            <line x1="560" y1="194" x2="560" y2="206" stroke="#111827" stroke-width="2" />
+            <text x="560" y="226">1.0 s</text>
+            <line x1="810" y1="194" x2="810" y2="206" stroke="#111827" stroke-width="2" />
+            <text x="810" y="226">1.5 s</text>
+            <line x1="1060" y1="194" x2="1060" y2="206" stroke="#111827" stroke-width="2" />
+            <text x="1060" y="226">2.0 s</text>
+          </g>
+          <!-- bursts -->
+          <g>
+            <rect x="500" y="74" width="54" height="64" rx="4" fill="#1d4ed8" />
+            <text
+              x="527"
+              y="104"
+              text-anchor="middle"
+              font-size="16"
+              font-weight="700"
+              fill="#fff"
+              style="fill: #fff"
+            >
+              10
+            </text>
+            <text
+              x="527"
+              y="124"
+              text-anchor="middle"
+              font-size="12"
+              fill="#fff"
+              style="fill: #fff"
+            >
+              @0.99 s
+            </text>
+            <rect x="566" y="74" width="54" height="64" rx="4" fill="#b91c1c" />
+            <text
+              x="593"
+              y="104"
+              text-anchor="middle"
+              font-size="16"
+              font-weight="700"
+              fill="#fff"
+              style="fill: #fff"
+            >
+              10
+            </text>
+            <text
+              x="593"
+              y="124"
+              text-anchor="middle"
+              font-size="12"
+              fill="#fff"
+              style="fill: #fff"
+            >
+              @1.01 s
+            </text>
+          </g>
+          <!-- rolling span -->
+          <path
+            d="M310 60 L310 46 L810 46 L810 60"
+            fill="none"
+            stroke="#b91c1c"
+            stroke-width="2.4"
+          />
+          <text
+            x="560"
+            y="34"
+            text-anchor="middle"
+            font-size="17"
+            font-weight="700"
+            fill="#b91c1c"
+            style="fill: #b91c1c"
+          >
+            Span 0.5 s – 1.5 s holds 20 allowed requests: limit broken
+          </text>
+          <!-- sliding log callout -->
+          <rect x="650" y="74" width="420" height="64" rx="8" fill="#e8f6ec" stroke="#166534" />
+          <text
+            x="666"
+            y="100"
+            font-size="16"
+            font-weight="700"
+            fill="#166534"
+            style="fill: #166534"
+          >
+            Sliding log: 2nd batch denied
+          </text>
+          <text x="666" y="124" font-size="15" class="mono">
+            retryAfterMs = 990 + 1000 − 1010 = 980
+          </text>
+        </svg>
+      </section>
+
+      <!-- 7. Sliding window log in detail -->
+      <section class="slide" aria-label="Slide 7: Sliding window log in detail">
+        <p class="kicker">Algorithm</p>
+        <h2>Sliding window log, step by step</h2>
+        <div class="cols wide-left">
+          <div style="display: grid; gap: 10px">
+            <pre><code>consume(key, { limit, windowMs }) {
+  <span class="k">const</span> now = <span class="k">this</span>.clock.now();
+  <span class="k">return</span> <span class="k">this</span>.store.update(key, windowMs, (previous = []) =&gt; {
+    <span class="k">const</span> live = previous.filter((t) =&gt; t &gt; now - windowMs); <span class="c">// 1</span>
+    <span class="k">if</span> (live.length &lt; limit) {                                <span class="c">// 2</span>
+      <span class="k">const</span> state = [...live, now];
+      <span class="k">return</span> { state, result: { allowed: <span class="k">true</span>,
+        remaining: limit - state.length, ... } };
+    }
+    <span class="k">const</span> waitMs = live[0] + windowMs - now;                  <span class="c">// 3</span>
+    <span class="k">return</span> { state: live,     <span class="c">// denied: not recorded</span>
+      result: { allowed: <span class="k">false</span>, retryAfterMs: waitMs, ... } };
+  });
+}</code></pre>
+            <p class="small muted">
+              Simplified from <code>src/strategies/SlidingWindowLogStrategy.ts</code>
+            </p>
+          </div>
+          <ul>
+            <li><strong>1. Drop</strong> timestamps <code>≤ now − windowMs</code></li>
+            <li><strong>2. Allow + record</strong> <code>now</code> if under the limit</li>
+            <li><strong>3. Deny</strong> with the <em>exact</em> wait until the oldest leaves</li>
+            <li>
+              <strong>Denied requests are not recorded</strong>: hammering never pushes the wait out
+            </li>
+            <li>The log never holds more than <code>limit</code> timestamps (asserted)</li>
+            <li>
+              Atomic: <code>InMemoryStore</code> reads, transitions and writes with no
+              <code>await</code> in between
+            </li>
+          </ul>
+        </div>
+        <div class="card accent small">
+          <strong>Test, 10 per 1000 ms:</strong> 5 at t=0 and 5 at t=500 → t=999 denied,
+          <code>retryAfterMs: 1</code> → at t=1000 exactly 5 slots free; the 6th is denied with
+          <code>retryAfterMs: 500</code>.
+        </div>
+      </section>
+
+      <!-- 8. Extension (a) -->
+      <section class="slide" aria-label="Slide 8: Extension (a), limits per resource and consumer">
+        <p class="kicker">Extension (a) · built</p>
+        <h2>Limits per resource and per consumer</h2>
+        <div class="cols wide-right">
+          <div style="display: grid; gap: 10px">
+            <p class="small muted">Most specific rule wins:</p>
+            <svg class="diagram" viewBox="0 0 440 300" role="img" aria-labelledby="prec-title">
+              <title id="prec-title">
+                Policy precedence: override for resource plus consumer, then consumer, then
+                resource, then default
+              </title>
+              <g font-size="18">
+                <rect x="0" y="0" width="440" height="60" rx="8" fill="#1d4ed8" />
+                <text x="20" y="37" font-weight="700" style="fill: #fff">
+                  1. overrides[resource][consumer]
+                </text>
+                <rect x="30" y="78" width="410" height="60" rx="8" fill="#3b63d6" />
+                <text x="50" y="115" font-weight="700" style="fill: #fff">
+                  2. consumers[consumerId]
+                </text>
+                <rect
+                  x="60"
+                  y="156"
+                  width="380"
+                  height="60"
+                  rx="8"
+                  fill="#eaf1ff"
+                  stroke="#1d4ed8"
+                />
+                <text x="80" y="193" font-weight="700">3. resources[resource]</text>
+                <rect
+                  x="90"
+                  y="234"
+                  width="350"
+                  height="60"
+                  rx="8"
+                  fill="#f3f4f6"
+                  stroke="#374151"
+                />
+                <text x="110" y="271" font-weight="700">4. default</text>
+              </g>
+            </svg>
+          </div>
+          <div style="display: grid; gap: 12px">
+            <pre><code>createRateLimiter({
+  policies: <span class="k">new</span> ConfigurablePolicyResolver({
+    default:   { limit: 10, windowMs: 1000 },
+    resources: { search: { limit: 5, windowMs: 1000 } },
+    consumers: { <span class="s">'partner-acme'</span>: { limit: 100, windowMs: 1000 } },
+    overrides: { search: { <span class="s">'partner-acme'</span>: { limit: 50, ... } } },
+  }),
+});</code></pre>
+            <ul class="small">
+              <li>
+                <strong>Validated up front</strong>: <code>InvalidArgumentError</code>, e.g.
+                <code>overrides.search.partner-acme.limit must be a positive integer, got 0</code>
+                (a zero limit would mean zero-wait denies and a spinning client)
+              </li>
+              <li>
+                <strong>Collision-proof keys</strong>:
+                <code>JSON.stringify([resource, consumerId])</code>, so <code>["a:b","c"]</code> ≠
+                <code>["a","b:c"]</code>
+              </li>
+              <li>
+                Own-property lookups: IDs such as <code>"__proto__"</code> or
+                <code>"toString"</code> are safe
+              </li>
+              <li>
+                Missing <code>resource</code> →
+                <code>DEFAULT_RESOURCE</code> (<code>"default"</code>)
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- 9. HTTP + client -->
+      <section class="slide" aria-label="Slide 9: HTTP integration and client side">
+        <p class="kicker">Integration</p>
+        <h2>HTTP headers and client-side waiting</h2>
+        <div class="cols">
+          <div style="display: grid; gap: 12px">
+            <h3>Server: <code>toRateLimitHeaders(result)</code></h3>
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Header</th>
+                  <th scope="col">Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>RateLimit-Limit</code></td>
+                  <td>Quota per window</td>
+                </tr>
+                <tr>
+                  <td><code>RateLimit-Remaining</code></td>
+                  <td>Units left</td>
+                </tr>
+                <tr>
+                  <td><code>RateLimit-Reset</code></td>
+                  <td><em>Relative</em> seconds until a unit frees up</td>
+                </tr>
+                <tr>
+                  <td><code>Retry-After</code></td>
+                  <td><strong>Only on deny</strong> (RFC 9110)</td>
+                </tr>
+              </tbody>
+            </table>
+            <ul class="small">
+              <li>IETF RateLimit header fields draft</li>
+              <li>
+                Seconds <strong>rounded up</strong>: 1 ms → 1, 1000 ms → 1, 1001 ms → 2, so an
+                obedient client is never early
+              </li>
+              <li>
+                The request using the last unit is allowed with <code>remaining: 0</code>, no
+                <code>Retry-After</code>
+              </li>
+            </ul>
+          </div>
+          <div style="display: grid; gap: 12px">
+            <h3>Client: <code>acquire</code> / <code>withRateLimit</code></h3>
+            <pre><code><span class="k">await</span> acquire(limiter, { consumerId: <span class="s">'nightly-job'</span> }, {
+  maxWaitMs: 5000, jitterMs: 50,
+  signal: AbortSignal.timeout(10_000),
+});
+<span class="k">const</span> throttled =
+  withRateLimit(limiter, consumer, callApi);</code></pre>
+            <ul class="small">
+              <li>
+                Waits the <strong>exact</strong> <code>retryAfterMs</code>, not exponential backoff
+              </li>
+              <li><code>jitterMs</code> adds 0..jitter <em>on top</em>: spread out, never early</li>
+              <li>
+                <code>maxWaitMs</code> / <code>maxAttempts</code>: fail fast with
+                <code>RateLimitTimeoutError</code>, without sleeping first
+              </li>
+              <li>
+                <code>signal</code> aborts at once; invalid options →
+                <code>InvalidArgumentError</code>
+              </li>
+              <li>
+                Ideas from <code>urllib3.Retry</code>, <code>tenacity</code>, <code>p-limit</code>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- 10. HA -->
+      <section class="slide" aria-label="Slide 10: Extension (b), high availability design">
+        <p class="kicker">Extension (b) · designed, not built</p>
+        <h2>High availability: shared state in Redis</h2>
+        <div class="cols wide-right">
+          <svg class="diagram" viewBox="0 0 440 420" role="img" aria-labelledby="ha-title ha-desc">
+            <title id="ha-title">High availability deployment</title>
+            <desc id="ha-desc">
+              Clients go through an API gateway with coarse per-IP limits, then a load balancer, to
+              N app instances. Each instance runs the rate limiter and checks a shared Redis with
+              one atomic Lua script per check. Redis replicates to a replica.
+            </desc>
+            <defs>
+              <marker
+                id="harr"
+                viewBox="0 0 10 10"
+                refX="9"
+                refY="5"
+                markerWidth="8"
+                markerHeight="8"
+                orient="auto"
+              >
+                <path d="M0 0 L10 5 L0 10 z" fill="#374151" />
+              </marker>
+            </defs>
+            <g stroke="#374151" stroke-width="1.8" fill="none" marker-end="url(#harr)">
+              <line x1="220" y1="56" x2="220" y2="86" />
+              <line x1="220" y1="138" x2="80" y2="180" />
+              <line x1="220" y1="138" x2="220" y2="180" />
+              <line x1="220" y1="138" x2="360" y2="180" />
+              <line x1="80" y1="240" x2="190" y2="300" />
+              <line x1="220" y1="240" x2="220" y2="298" />
+              <line x1="360" y1="240" x2="250" y2="300" />
+            </g>
+            <line
+              x1="290"
+              y1="330"
+              x2="336"
+              y2="330"
+              stroke="#374151"
+              stroke-width="1.8"
+              stroke-dasharray="5 4"
+              marker-end="url(#harr)"
+            />
+            <g font-size="16" text-anchor="middle">
+              <rect x="110" y="8" width="220" height="48" rx="8" fill="#f3f4f6" stroke="#374151" />
+              <text x="220" y="30" font-weight="700">API gateway / CDN</text>
+              <text x="220" y="48" font-size="13" fill="#4b5563">coarse per-IP limits</text>
+              <rect x="130" y="90" width="180" height="48" rx="8" fill="#f3f4f6" stroke="#374151" />
+              <text x="220" y="120" font-weight="700">Load balancer</text>
+              <rect x="20" y="182" width="120" height="58" rx="8" fill="#eaf1ff" stroke="#1d4ed8" />
+              <text x="80" y="208" font-weight="700">App 1</text>
+              <text x="80" y="228" font-size="13">RateLimiter</text>
+              <rect
+                x="160"
+                y="182"
+                width="120"
+                height="58"
+                rx="8"
+                fill="#eaf1ff"
+                stroke="#1d4ed8"
+              />
+              <text x="220" y="208" font-weight="700">App 2</text>
+              <text x="220" y="228" font-size="13">RateLimiter</text>
+              <rect
+                x="300"
+                y="182"
+                width="120"
+                height="58"
+                rx="8"
+                fill="#eaf1ff"
+                stroke="#1d4ed8"
+              />
+              <text x="360" y="208" font-weight="700">App N</text>
+              <text x="360" y="228" font-size="13">RateLimiter</text>
+              <rect
+                x="150"
+                y="300"
+                width="140"
+                height="62"
+                rx="8"
+                fill="#fdecec"
+                stroke="#b91c1c"
+              />
+              <text x="220" y="326" font-weight="700">Redis primary</text>
+              <text x="220" y="346" font-size="13">Lua · TIME</text>
+              <rect
+                x="338"
+                y="300"
+                width="96"
+                height="62"
+                rx="8"
+                fill="#fff"
+                stroke="#374151"
+                stroke-dasharray="5 3"
+              />
+              <text x="386" y="336" font-size="14">replica</text>
+            </g>
+            <text
+              x="220"
+              y="398"
+              text-anchor="middle"
+              font-size="14"
+              fill="#4b5563"
+              style="fill: #4b5563"
+            >
+              Today: in-memory per process → N × 10/s
+            </text>
+          </svg>
+          <div class="cols dense" style="gap: 12px">
+            <div class="card small">
+              <h3>Plug-in options</h3>
+              <ul>
+                <li>
+                  <code>RedisStore</code> behind <code>RateLimitStore</code>, atomic via
+                  <code>WATCH</code>/<code>MULTI</code> retries
+                </li>
+                <li>
+                  Simpler: a Redis <code>RateLimitStrategy</code> running one Lua script
+                  (<code>ZREMRANGEBYSCORE</code>, <code>ZCARD</code>, <code>ZADD</code>,
+                  <code>PEXPIRE</code>)
+                </li>
+              </ul>
+            </div>
+            <div class="card small">
+              <h3>Correctness</h3>
+              <ul>
+                <li>One script = atomic check-and-record: no two instances take the last slot</li>
+                <li>Redis <code>TIME</code>: app clock skew doesn't matter</li>
+                <li>Cluster: hash tags <code>rl:{consumerId}:…</code> for multi-key checks</li>
+              </ul>
+            </div>
+            <div class="card small warn">
+              <h3>Failure policy</h3>
+              <ul>
+                <li>
+                  <strong>Fail-open</strong> keeps serving, drops the limit;
+                  <strong>fail-closed</strong> turns a Redis outage into an outage
+                </li>
+                <li>
+                  Middle ground: short timeout → local <code>limit / N</code> + circuit breaker
+                </li>
+              </ul>
+            </div>
+            <div class="card small">
+              <h3>Operations</h3>
+              <ul>
+                <li>Async replication: failover may briefly over-allow; documented</li>
+                <li>Local pre-check denies clearly-over consumers without a round trip</li>
+                <li>API is already async: callers don't change</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 11. NFRs -->
+      <section class="slide" aria-label="Slide 11: Non-functional requirements">
+        <p class="kicker">Quality attributes</p>
+        <h2>Non-functional requirements</h2>
+        <div class="cols wide-left">
+          <table>
+            <caption class="small muted" style="text-align: left; padding-bottom: 6px">
+              Done: each with a verifiable criterion and a test
+              (<code>docs/plans/rate-limiter.md</code>)
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">NFR</th>
+                <th scope="col">Criterion</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Scalability</td>
+                <td>O(limit) memory and time per active key; idle keys swept</td>
+              </tr>
+              <tr>
+                <td>Maintainability</td>
+                <td>
+                  New algorithm / policy source / store = new class; factory is the only place
+                  picking concrete classes
+                </td>
+              </tr>
+              <tr>
+                <td>Readability</td>
+                <td>One class per file; API matches design note; README covers every export</td>
+              </tr>
+              <tr>
+                <td>Security</td>
+                <td>
+                  Env limits and code policies validated (fail fast); collision-proof keys; no
+                  self-lockout; <code>Retry-After</code> rounded up; <code>acquire</code> bounded
+                </td>
+              </tr>
+              <tr>
+                <td>Observability</td>
+                <td>
+                  <code>limit</code>, <code>remaining</code>, <code>resetMs</code>,
+                  <code>retryAfterMs</code> on every result → standard headers
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div style="display: grid; gap: 12px">
+            <div class="card warn small">
+              <h3><span class="tag warn">Deferred</span> Multi-instance scale</h3>
+              <p>
+                Extension (b) is design-only: shared <code>RedisStore</code> behind the same port
+              </p>
+            </div>
+            <div class="card warn small">
+              <h3><span class="tag warn">Deferred</span> Max-keys cap</h3>
+              <p>
+                A flood of unique IDs grows memory until the sweep; mitigate at the gateway or with
+                Redis
+              </p>
+            </div>
+            <div class="card warn small">
+              <h3><span class="tag warn">Deferred</span> Logs / metrics</h3>
+              <p>No logger port yet; the hook is a Decorator over <code>RateLimitStrategy</code></p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 12. Quality and testing -->
+      <section class="slide" aria-label="Slide 12: Quality and testing">
+        <p class="kicker">Quality</p>
+        <h2>Testing and type safety</h2>
+        <div class="stats">
+          <div class="stat"><strong>226</strong><span>tests passing, 19 test files</span></div>
+          <div class="stat">
+            <strong>2,000</strong><span>seeded random arrivals in the invariant test</span>
+          </div>
+          <div class="stat">
+            <strong>0</strong
+            ><span
+              >type errors under strict <code>tsc</code>; no <code>any</code>, <code>as</code>,
+              <code>!</code>, <code>enum</code></span
+            >
+          </div>
+          <div class="stat">
+            <strong>14</strong
+            ><span>tasks, one branch + PR each (#8–#25); Red → Green evidence in code PRs</span>
+          </div>
+        </div>
+        <div class="cols">
+          <ul>
+            <li><strong>TDD</strong>: failing test first, Red output quoted in every code PR</li>
+            <li>
+              <strong>Invariant</strong>: no 1-second span ever holds more than 10 allowed requests
+              (<code>mulberry32(42)</code>)
+            </li>
+            <li>
+              <strong>Deterministic time</strong>: injected <code>FakeClock</code>;
+              <code>vi.useFakeTimers()</code> only where <code>setTimeout</code> runs
+            </li>
+          </ul>
+          <ul>
+            <li><strong>Tree-shaking probes</strong> (esbuild): barrels stay side-effect free</li>
+            <li><strong>Lint-rule tests</strong>: import bans and ordering really fire</li>
+            <li>
+              <strong>Pre-commit hook</strong>: ESLint + Prettier + typecheck;
+              <code>pnpm check</code> before every PR
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- 13. Process -->
+      <section class="slide" aria-label="Slide 13: Engineering process">
+        <p class="kicker">How it was built</p>
+        <h2>Engineering process</h2>
+        <svg class="diagram" viewBox="0 0 1150 170" role="img" aria-labelledby="proc-title">
+          <title id="proc-title">
+            Process: OOAD design note, task plan with NFRs, then per task a branch, TDD, review,
+            rebase on main and a pull request merged by a human
+          </title>
+          <defs>
+            <marker
+              id="parr"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="8"
+              markerHeight="8"
+              orient="auto"
+            >
+              <path d="M0 0 L10 5 L0 10 z" fill="#374151" />
+            </marker>
+          </defs>
+          <g stroke="#374151" stroke-width="2" marker-end="url(#parr)">
+            <line x1="150" y1="60" x2="168" y2="60" />
+            <line x1="310" y1="60" x2="328" y2="60" />
+            <line x1="470" y1="60" x2="488" y2="60" />
+            <line x1="630" y1="60" x2="648" y2="60" />
+            <line x1="790" y1="60" x2="808" y2="60" />
+            <line x1="950" y1="60" x2="968" y2="60" />
+          </g>
+          <g font-size="17" text-anchor="middle">
+            <rect x="10" y="20" width="140" height="80" rx="10" fill="#eaf1ff" stroke="#1d4ed8" />
+            <text x="80" y="54" font-weight="700">OOAD</text>
+            <text x="80" y="78" font-size="14">design note</text>
+            <rect x="170" y="20" width="140" height="80" rx="10" fill="#eaf1ff" stroke="#1d4ed8" />
+            <text x="240" y="54" font-weight="700">Plan</text>
+            <text x="240" y="78" font-size="14">tasks + NFRs</text>
+            <rect x="330" y="20" width="140" height="80" rx="10" fill="#fff" stroke="#374151" />
+            <text x="400" y="54" font-weight="700">Branch</text>
+            <text x="400" y="78" font-size="14">one per task</text>
+            <rect x="490" y="20" width="140" height="80" rx="10" fill="#e8f6ec" stroke="#166534" />
+            <text x="560" y="54" font-weight="700">TDD</text>
+            <text x="560" y="78" font-size="14">Red → Green</text>
+            <rect x="650" y="20" width="140" height="80" rx="10" fill="#fff" stroke="#374151" />
+            <text x="720" y="54" font-weight="700">Review</text>
+            <text x="720" y="78" font-size="14">fix Critical/Med.</text>
+            <rect x="810" y="20" width="140" height="80" rx="10" fill="#fff" stroke="#374151" />
+            <text x="880" y="54" font-weight="700">Rebase</text>
+            <text x="880" y="78" font-size="14">on latest main</text>
+            <rect x="970" y="20" width="170" height="80" rx="10" fill="#fdf3e2" stroke="#92400e" />
+            <text x="1055" y="54" font-weight="700">PR</text>
+            <text x="1055" y="78" font-size="14">human merge only</text>
+          </g>
+          <path
+            d="M1055 102 C1055 150, 400 150, 400 104"
+            fill="none"
+            stroke="#9ca3af"
+            stroke-width="1.6"
+            stroke-dasharray="5 4"
+            marker-end="url(#parr)"
+          />
+          <text
+            x="728"
+            y="160"
+            text-anchor="middle"
+            font-size="14"
+            fill="#4b5563"
+            style="fill: #4b5563"
+          >
+            next task (parallel where independent)
+          </text>
+        </svg>
+        <div class="cols three">
+          <div class="card small">
+            <h3>Design first</h3>
+            <p>
+              Use cases, responsibilities, patterns and a class diagram in
+              <code>docs/design/</code> before any code
+            </p>
+          </div>
+          <div class="card small">
+            <h3>Small vertical tasks</h3>
+            <p>
+              14 tasks, each &lt; ~300 lines with its tests, leaving <code>main</code> green on its
+              own
+            </p>
+          </div>
+          <div class="card small">
+            <h3>Guardrails</h3>
+            <p>
+              SOLID, GoF only where it removes coupling, Zod-validated env, strict TS, never
+              <code>--no-verify</code>
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 14. Delivery waves -->
+      <section class="slide" aria-label="Slide 14: Delivery, task dependency graph">
+        <p class="kicker">How it was built</p>
+        <h2>Delivery: 14 tasks in 6 waves</h2>
+        <svg class="diagram" viewBox="0 0 1150 450" role="img" aria-labelledby="dag-title dag-desc">
+          <title id="dag-title">Task dependency graph with pull request numbers</title>
+          <desc id="dag-desc">
+            Wave 1: task 1 design note and plan, PR 8. Wave 2: task 2 core types PR 11, task 3 env
+            PR 9, task 4 errors PR 10. Wave 3: task 5 InMemoryStore PR 16, task 6 policy resolver PR
+            17, task 7 RateLimiter PR 15, task 8 headers PR 14. Wave 4: task 9 sliding window log PR
+            18, task 10 acquire PR 19. Wave 5: task 12 wiring PR 24, task 11 withRateLimit PR 23,
+            task 14 policy validation PR 21. Wave 6: task 13 README PR 25.
+          </desc>
+          <defs>
+            <marker
+              id="darr"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto"
+            >
+              <path d="M0 0 L10 5 L0 10 z" fill="#6b7280" />
+            </marker>
+          </defs>
+          <g
+            font-size="14"
+            font-weight="700"
+            fill="#4b5563"
+            text-anchor="middle"
+            style="fill: #4b5563"
+          >
+            <text x="95" y="20">WAVE 1</text>
+            <text x="290" y="20">WAVE 2</text>
+            <text x="485" y="20">WAVE 3</text>
+            <text x="680" y="20">WAVE 4</text>
+            <text x="875" y="20">WAVE 5</text>
+            <text x="1070" y="20">WAVE 6</text>
+          </g>
+          <g stroke="#6b7280" stroke-width="1.5" fill="none" marker-end="url(#darr)">
+            <path d="M170 240 C188.5 240, 188.5 140, 207 140" />
+            <path d="M170 240 C188.5 240, 188.5 240, 207 240" />
+            <path d="M170 240 C188.5 240, 188.5 340, 207 340" />
+            <path d="M365 140 C383.5 140, 383.5 90, 402 90" />
+            <path d="M365 140 C383.5 140, 383.5 190, 402 190" />
+            <path d="M365 140 C383.5 140, 383.5 290, 402 290" />
+            <path d="M365 140 C383.5 140, 383.5 390, 402 390" />
+            <path d="M560 90 C578.5 90, 578.5 90, 597 90" />
+            <path d="M365 340 L570 340 C584 340, 584 290, 597 290" />
+            <path d="M560 290 C578.5 290, 578.5 290, 597 290" />
+            <path d="M755 290 C773.5 290, 773.5 270, 792 270" />
+            <path d="M365 240 C578.5 240, 578.5 140, 792 140" />
+            <path d="M560 190 C676 190, 676 140, 792 140" />
+            <path d="M560 290 C676 290, 676 140, 792 140" />
+            <path d="M755 90 C773.5 90, 773.5 140, 792 140" />
+            <path d="M560 190 C676 190, 676 400, 792 400" />
+            <path d="M755 290 C773.5 290, 773.5 400, 792 400" />
+            <path d="M560 390 C773.5 390, 773.5 240, 987 240" />
+            <path d="M950 270 C968.5 270, 968.5 240, 987 240" />
+            <path d="M950 140 C968.5 140, 968.5 240, 987 240" />
+          </g>
+          <g font-size="14">
+            <!-- W1 -->
+            <rect x="20" y="212" width="150" height="56" rx="8" fill="#eaf1ff" stroke="#1d4ed8" />
+            <text x="30" y="234" font-weight="700">1 Design + plan</text>
+            <text x="30" y="256" fill="#4b5563" style="fill: #4b5563">PR #8</text>
+            <!-- W2 -->
+            <rect x="215" y="112" width="150" height="56" rx="8" fill="#fff" stroke="#374151" />
+            <text x="225" y="134" font-weight="700">2 Types, ports</text>
+            <text x="225" y="156" fill="#4b5563" style="fill: #4b5563">PR #11</text>
+            <rect x="215" y="212" width="150" height="56" rx="8" fill="#fff" stroke="#374151" />
+            <text x="225" y="234" font-weight="700">3 Env config</text>
+            <text x="225" y="256" fill="#4b5563" style="fill: #4b5563">PR #9</text>
+            <rect x="215" y="312" width="150" height="56" rx="8" fill="#fff" stroke="#374151" />
+            <text x="225" y="334" font-weight="700">4 Errors</text>
+            <text x="225" y="356" fill="#4b5563" style="fill: #4b5563">PR #10</text>
+            <!-- W3 -->
+            <rect x="410" y="62" width="150" height="56" rx="8" fill="#fff" stroke="#374151" />
+            <text x="420" y="84" font-weight="700">5 InMemoryStore</text>
+            <text x="420" y="106" fill="#4b5563" style="fill: #4b5563">PR #16</text>
+            <rect x="410" y="162" width="150" height="56" rx="8" fill="#fff" stroke="#374151" />
+            <text x="420" y="184" font-weight="700">6 PolicyResolver</text>
+            <text x="420" y="206" fill="#4b5563" style="fill: #4b5563">PR #17</text>
+            <rect x="410" y="262" width="150" height="56" rx="8" fill="#fff" stroke="#374151" />
+            <text x="420" y="284" font-weight="700">7 RateLimiter</text>
+            <text x="420" y="306" fill="#4b5563" style="fill: #4b5563">PR #15</text>
+            <rect x="410" y="362" width="150" height="56" rx="8" fill="#fff" stroke="#374151" />
+            <text x="420" y="384" font-weight="700">8 HTTP headers</text>
+            <text x="420" y="406" fill="#4b5563" style="fill: #4b5563">PR #14</text>
+            <!-- W4 -->
+            <rect x="605" y="62" width="150" height="56" rx="8" fill="#e8f6ec" stroke="#166534" />
+            <text x="615" y="84" font-weight="700">9 Sliding log</text>
+            <text x="615" y="106" fill="#4b5563" style="fill: #4b5563">PR #18</text>
+            <rect x="605" y="262" width="150" height="56" rx="8" fill="#fff" stroke="#374151" />
+            <text x="615" y="284" font-weight="700">10 acquire</text>
+            <text x="615" y="306" fill="#4b5563" style="fill: #4b5563">PR #19</text>
+            <!-- W5 -->
+            <rect x="800" y="112" width="150" height="56" rx="8" fill="#fff" stroke="#374151" />
+            <text x="810" y="134" font-weight="700">12 Wiring + API</text>
+            <text x="810" y="156" fill="#4b5563" style="fill: #4b5563">PR #24</text>
+            <rect x="800" y="242" width="150" height="56" rx="8" fill="#fff" stroke="#374151" />
+            <text x="810" y="264" font-weight="700">11 withRateLimit</text>
+            <text x="810" y="286" fill="#4b5563" style="fill: #4b5563">PR #23</text>
+            <rect x="800" y="372" width="150" height="56" rx="8" fill="#fdf3e2" stroke="#92400e" />
+            <text x="810" y="394" font-weight="700">14 Policy check</text>
+            <text x="810" y="416" fill="#4b5563" style="fill: #4b5563">PR #21 · from review</text>
+            <!-- W6 -->
+            <rect x="995" y="212" width="150" height="56" rx="8" fill="#eaf1ff" stroke="#1d4ed8" />
+            <text x="1005" y="234" font-weight="700">13 README</text>
+            <text x="1005" y="256" fill="#4b5563" style="fill: #4b5563">PR #25</text>
+          </g>
+        </svg>
+        <p class="small muted">
+          Same wave = parallel branches. Before: tooling PRs #1–#4, guideline PRs #5, #7, #12. Plan
+          updates: #20, #22.
+        </p>
+      </section>
+
+      <!-- 15. Limitations -->
+      <section class="slide" aria-label="Slide 15: Known limitations and next steps">
+        <p class="kicker">Honest gaps</p>
+        <h2>Known limitations and next steps</h2>
+        <div class="cols three">
+          <div class="card warn">
+            <h3>Per-process state</h3>
+            <ul>
+              <li>N instances → effective limit <strong>N × limit</strong></li>
+              <li>
+                <em>Next:</em> extension (b), Redis behind the existing ports; callers unchanged
+              </li>
+            </ul>
+          </div>
+          <div class="card warn">
+            <h3>Unique IDs grow memory</h3>
+            <ul>
+              <li>Keys live until TTL + next sweep; no max-keys cap</li>
+              <li>
+                <em>Mitigate:</em> per-IP limits at the gateway, IDs from authenticated identities,
+                or Redis
+              </li>
+            </ul>
+          </div>
+          <div class="card warn">
+            <h3>No logs or metrics</h3>
+            <ul>
+              <li><code>LOG_LEVEL</code> unused; no logger port</li>
+              <li>
+                <em>Next:</em> a logging Decorator over <code>RateLimitStrategy</code> (sketched in
+                the README)
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="card accent">
+          <h3>Future improvements (README) · effort S = one PR, M = a few PRs</h3>
+          <div class="future">
+            <div>
+              <h4>Scale and HA</h4>
+              <ul>
+                <li>Redis Lua strategy (M)</li>
+                <li>Max-keys cap, LRU (S)</li>
+                <li>Sliding counter / token bucket (S)</li>
+              </ul>
+            </div>
+            <div>
+              <h4>Features</h4>
+              <ul>
+                <li><code>strategy</code> factory option (S)</li>
+                <li>Weighted requests (M)</li>
+                <li>Policies from DB / plan (M)</li>
+              </ul>
+            </div>
+            <div>
+              <h4>Observability</h4>
+              <ul>
+                <li>Logger port + Decorator (S)</li>
+                <li>OpenTelemetry metrics (M)</li>
+              </ul>
+            </div>
+            <div>
+              <h4>Quality and delivery</h4>
+              <ul>
+                <li>CI on every PR (S)</li>
+                <li>Property-based tests (S)</li>
+                <li>Benchmarks (S), mutation tests (M)</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 16. Summary -->
+      <section class="slide" aria-label="Slide 16: Summary and questions">
+        <p class="kicker">Summary</p>
+        <h2>Takeaways</h2>
+        <ul style="font-size: 25px; display: grid; gap: 8px">
+          <li>
+            <strong>Correct by construction</strong>: a sliding window log holds “≤ 10 in
+            <em>any</em> second”, proven by a randomised invariant test
+          </li>
+          <li>
+            <strong>Exact answers</strong>: <code>retryAfterMs</code> to the millisecond; headers
+            rounded up; denied requests never recorded
+          </li>
+          <li>
+            <strong>Extensible</strong>: Strategy, Adapter, Factory and Decorator seams;
+            per-resource / per-consumer limits built
+          </li>
+          <li>
+            <strong>Ready to scale out</strong>: async API and store port prepared for Redis (Lua,
+            <code>TIME</code>, explicit failure policy)
+          </li>
+          <li>
+            <strong>Disciplined delivery</strong>: OOAD → plan → TDD → review → one small PR per
+            task
+          </li>
+        </ul>
+        <p class="big-quote" style="margin-top: 16px">Questions?</p>
+      </section>
+    </main>
+
+    <nav id="nav" class="nav" aria-label="Slide navigation">
+      <button type="button" id="prev" aria-label="Previous slide">&#8249;</button>
+      <span id="counter" class="counter" aria-live="polite">1 / 16</span>
+      <button type="button" id="next" aria-label="Next slide">&#8250;</button>
+    </nav>
+
+    <script>
+      (() => {
+        const deck = document.getElementById('deck');
+        const slides = Array.from(deck.querySelectorAll('.slide'));
+        const counter = document.getElementById('counter');
+        const prev = document.getElementById('prev');
+        const next = document.getElementById('next');
+        let current = 0;
+        slides.forEach((slide, i) => {
+          slide.dataset.n = String(i + 1);
+        });
+
+        const show = (index) => {
+          current = Math.max(0, Math.min(slides.length - 1, index));
+          slides.forEach((slide, i) => {
+            slide.hidden = i !== current;
+          });
+          counter.textContent = `${current + 1} / ${slides.length}`;
+          prev.disabled = current === 0;
+          next.disabled = current === slides.length - 1;
+          history.replaceState(null, '', `#${current + 1}`);
+        };
+
+        const fit = () => {
+          const scale = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+          deck.style.setProperty('--scale', String(scale));
+        };
+
+        prev.addEventListener('click', () => show(current - 1));
+        next.addEventListener('click', () => show(current + 1));
+
+        document.addEventListener('keydown', (event) => {
+          if (event.altKey || event.ctrlKey || event.metaKey) return;
+          const forward = ['ArrowRight', 'PageDown'];
+          const back = ['ArrowLeft', 'PageUp'];
+          if (forward.includes(event.key) || (event.key === ' ' && !event.shiftKey)) {
+            if (event.key === ' ' && event.target instanceof HTMLButtonElement) return;
+            show(current + 1);
+          } else if (back.includes(event.key) || (event.key === ' ' && event.shiftKey)) {
+            show(current - 1);
+          } else if (event.key === 'Home') {
+            show(0);
+          } else if (event.key === 'End') {
+            show(slides.length - 1);
+          } else {
+            return;
+          }
+          event.preventDefault();
+        });
+
+        window.addEventListener('resize', fit);
+        const fromHash = Number.parseInt(location.hash.slice(1), 10);
+        fit();
+        show(Number.isNaN(fromHash) ? 0 : fromHash - 1);
+      })();
+    </script>
+  </body>
+</html>
